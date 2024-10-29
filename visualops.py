@@ -13,7 +13,6 @@ def overlay_segmentation_on_image(confocal_img, segmentation_mask, alpha=0.5):
     overlay_img = np.clip(overlay_img, 0, 255).astype(np.uint8)
     return overlay_img
 
-
 def add_label_to_image(image, label, font_size=10):
     """Add a label to the bottom of an image using matplotlib for text rendering."""
     fig, ax = plt.subplots()
@@ -27,15 +26,13 @@ def add_label_to_image(image, label, font_size=10):
 
     return labeled_image
 
-
 def calculate_grid_size(num_images):
     """Calculate the appropriate grid size (rows, cols) based on the number of images."""
     cols = math.ceil(math.sqrt(num_images))
     rows = math.ceil(num_images / cols)
     return rows, cols
 
-
-def overlay_masks_on_images(image_dir, mask_dir, output_filename, max_panels=10, is_3d=False, projection_axis=0,
+def create_image_panel(image_dir, mask_dir, output_filename, max_panels=10, is_3d=False, projection_axis=0,
                             overlay_mask=True):
     """Overlay segmentation masks on images with a maximum number of panels, optional 3D projection, and mask overlay."""
     original_images = sorted([f for f in os.listdir(image_dir) if f.endswith('.tif')])
