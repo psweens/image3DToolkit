@@ -1,248 +1,199 @@
+import os
 import cv2
 import tifffile
 import numpy as np
 from skimage import io
 
-def apply_gamma_correction(img_slice, gamma=2.0):
+class Operation:
+    def set_global_stats(self, stats):
+        pass
+
+    @property
+    def needs_stats(self):
+        return []
+
+    def __call__(self, img):
+        raise NotImplementedError
+
+class ApplyGammaCorrection(Operation):
+    def __init__(self, gamma=2.0):
+        self.gamma = gamma
+
+    def __call__(self, img):
+        img = img.astype(np.float32)
+        max_val = np.max(img)
+        return ((img / max_val) ** self.gamma) * max_val if max_val > 0 else img
+
+class ApplyCLAHE(Operation):
+    def __init__(self, clip_limit=2.0, grid_size=(8, 8)):
+        self.clip_limit = clip_limit
+        self.grid_size = grid_size
+        self.clahe = cv2.createCLAHE(clipLimit=self.clip_limit, tileGridSize=self.grid_size)
+
+    def __call__(self, img):
+        return self.clahe.apply(img.astype(np.uint8))
+
+class MinMaxNorm(Operation):
+    def __init__(self):
+        self.global_min = None
+        self.global_max = None
+
+    def set_global_stats(self, stats):
+        self.global_min = stats.get('min')
+        self.global_max = stats.get('max')
+
+    @property
+    def needs_stats(self):
+        return ['min', 'max']
+
+    def __call__(self, img):
+        if self.global_min is not None and self.global_max is not None:
+            return (img - self.global_min) / (self.global_max - self.global_min)
+        else:
+            img_min = np.min(img)
+            img_max = np.max(img)
+            return (img - img_min) / (img_max - img_min)
+
+class ZScoreNorm(Operation):
+    def __init__(self):
+        self.global_mean = None
+        self.global_std = None
+
+    def set_global_stats(self, stats):
+        self.global_mean = stats.get('mean')
+        self.global_std = stats.get('std')
+
+    @property
+    def needs_stats(self):
+        return ['mean', 'std']
+
+    def __call__(self, img):
+        if self.global_mean is not None and self.global_std is not None:
+            return (img - self.global_mean) / self.global_std if self.global_std > 0 else img - self.global_mean
+        else:
+            mean = np.mean(img)
+            std = np.std(img)
+            return (img - mean) / std if std > 0 else img - mean
+
+def compute_global_statistics(input_path, stats=['min', 'max', 'mean', 'std'], sample_rate=0.01):
     """
-    Apply gamma correction to an image slice.
+    Computes global statistics over an image by sampling slices.
 
     Args:
-        img_slice (np.ndarray): 2D image slice.
-        gamma (float): Gamma value for correction.
+        input_path (str): Path to the input image file.
+        stats (list of str): List of statistics to compute -> 'min', 'max', 'mean', 'std'
+        sample_rate (float): Proportion of slices to sample.
 
     Returns:
-        np.ndarray: Gamma-corrected image slice.
+        dict: Dictionary of computed statistics.
     """
-    img_slice = img_slice.astype(np.float32)
-    max_val = np.max(img_slice)
-    return ((img_slice / max_val) ** gamma) * max_val if max_val > 0 else img_slice
-
-
-def apply_clahe(img_slice, clip_limit=2.0, grid_size=(8, 8)):
-    """
-    Apply CLAHE (Contrast Limited Adaptive Histogram Equalization) to an image slice.
-
-    Args:
-        img_slice (np.ndarray): 2D image slice.
-        clip_limit (float): Threshold for contrast limiting.
-        grid_size (tuple): Grid size for histogram equalization.
-
-    Returns:
-        np.ndarray: CLAHE-enhanced image slice.
-    """
-    clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=grid_size)
-    return clahe.apply(img_slice.astype(np.uint8))
-
-def minmax_norm(img_slice):
-    """
-    Apply min/max normalization to an image slice.
-
-    Args:
-        img_slice (np.ndarray): 2D image slice.
-
-    Returns:
-        np.ndarray: Z-score normalized image slice.
-    """
-    img_max = np.max(img_slice)
-    img_min = np.min(img_slice)
-    return (img_slice - img_min) / (img_max - img_min)
-
-def z_score_norm(img_slice):
-    """
-    Apply Z-score normalization to an image slice.
-
-    Args:
-        img_slice (np.ndarray): 2D image slice.
-
-    Returns:
-        np.ndarray: Z-score normalized image slice.
-    """
-    mean = np.mean(img_slice)
-    std = np.std(img_slice)
-    return (img_slice - mean) / std if std > 0 else img_slice - mean
-
-def maximum_intensity_projection(image_path, axis=0):
-    """Perform a maximum intensity projection along a specified axis."""
-    img = io.imread(image_path)
-    mip = np.max(img, axis=axis)
-    return mip
-
-def get_normalisation_function(normalise):
-    """
-    Helper method to retrieve the normalization function based on the method specified.
-
-    Args:
-        normalise (str): Normalization method ('minmax' or 'zscore').
-
-    Returns:
-        function: Corresponding normalization function.
-    """
-    if normalise == 'minmax':
-        return minmax_norm
-    elif normalise == 'zscore':
-        return z_score_norm
-    return None
-
-def load_image_volume(file_path, normalise='', load_in_chunks=False, operations=None, apply_globally=False):
-    """
-    Load a 3D image stack from a TIFF file, with options for normalization and processing large files.
-
-    Args:
-        file_path (str): Path to the 3D image stack file.
-        normalise (str, optional): Global normalization method ('minmax' or 'zscore').
-        load_in_chunks (bool, optional): Whether to load the image in chunks.
-        operations (list of str, optional): List of slice-wise operations to apply per slice (e.g., 'gamma', 'clahe').
-        apply_globally (bool, optional): Whether to apply normalization globally or slice-wise (default is False for slice-wise).
-
-    Returns:
-        np.ndarray or generator: Loaded and processed 3D image stack or generator of slices.
-    """
-    operations = operations or []
-    normalisation_func = get_normalisation_function(normalise)
-
-    if not load_in_chunks:
-        image_vol = io.imread(file_path)
-
-        # Apply global normalization before slice-wise operations, if specified
-        if normalisation_func and apply_globally:
-            image_vol = normalisation_func(image_vol)
-
-        # Apply slice-wise operations
-        image_vol = apply_slice_operations(image_vol, operations)
-
-        # Apply global normalization slice-wise, if not applied globally
-        if normalisation_func and not apply_globally:
-            image_vol = apply_slice_normalization(image_vol, normalisation_func)
-
-        return image_vol
-    else:
-        return load_in_chunks(file_path, normalisation_func, operations, apply_globally)
-
-def _load_in_chunks(file_path, normalisation_func, operations, apply_globally):
-    """
-    Helper method for loading images in chunks (generator).
-    """
-    with tifffile.TiffFile(file_path) as tif:
-        num_slices = len(tif.pages)
-
-        if normalisation_func and apply_globally:
-            global_stats = _estimate_global_statistics(file_path, normalisation_func)
-
-        def slice_generator():
-            for page in tif.pages:
-                img_slice = page.asarray()
-
-                # Apply slice-wise operations
-                img_slice = apply_operations_to_slice(img_slice, operations)
-
-                # Apply global normalization slice-wise, if specified
-                if normalisation_func and not apply_globally:
-                    img_slice = normalisation_func(img_slice)
-
-                yield img_slice
-
-        return slice_generator()
-
-def apply_slice_operations(image_vol, operations):
-    """
-    Apply operations to each slice in a 3D volume (for slice-wise operations only).
-
-    Args:
-        image_vol (np.ndarray): 3D image stack.
-        operations (list of str): List of slice-wise operations to apply.
-
-    Returns:
-        np.ndarray: Processed image stack.
-    """
-    for i in range(image_vol.shape[0]):
-        image_vol[i] = apply_operations_to_slice(image_vol[i], operations)
-    return image_vol
-
-def apply_slice_normalization(image_vol, normalisation_func):
-    """
-    Apply normalization slice-by-slice to a 3D volume.
-
-    Args:
-        image_vol (np.ndarray): 3D image stack.
-        normalisation_func (function): Normalization function to apply.
-
-    Returns:
-        np.ndarray: Normalized image stack.
-    """
-    for i in range(image_vol.shape[0]):
-        image_vol[i] = normalisation_func(image_vol[i])
-    return image_vol
-
-def apply_operations_to_slice(img_slice, operations):
-    """
-    Apply specified operations to a single image slice.
-
-    Args:
-        img_slice (np.ndarray): 2D image slice.
-        operations (list of str): List of operations to apply to each slice.
-
-    Returns:
-        np.ndarray: Processed image slice.
-    """
-    for op in operations:
-        if op == 'gamma':
-            img_slice = apply_gamma_correction(img_slice)
-        elif op == 'clahe':
-            img_slice = apply_clahe(img_slice)
-        elif op == 'zscore_slice':
-            img_slice = z_score_norm(img_slice)
-    return img_slice
-
-def _estimate_global_statistics(file_path, normalisation_func, sample_rate=0.01):
-    """
-    Estimate global statistics for normalization by sampling slices.
-
-    Args:
-        file_path (str): Path to the image stack file.
-        normalisation_func (function): Normalization function.
-        sample_rate (float): Proportion of slices to sample (default 1%).
-
-    Returns:
-        tuple: Global statistics needed for normalization.
-    """
-    sampled_values = _sample_slices(file_path, sample_rate)
-    if normalisation_func == minmax_norm:
-        return np.min(sampled_values), np.max(sampled_values)
-    elif normalisation_func == z_score_norm:
-        return np.mean(sampled_values), np.std(sampled_values)
-    return None
-
-def _sample_slices(file_path, sample_rate):
-    """
-    Sample slices from a large 3D image for estimating statistics.
-
-    Args:
-        file_path (str): Path to the image stack file.
-        sample_rate (float): Proportion of slices to sample (default 1%).
-
-    Returns:
-        np.ndarray: Sampled values from the slices.
-    """
-    sampled_values = []
-    with tifffile.TiffFile(file_path) as tif:
+    with tifffile.TiffFile(input_path) as tif:
         total_slices = len(tif.pages)
         interval = max(1, int(1 / sample_rate))
+        sampled_values = []
         for idx in range(0, total_slices, interval):
             img_slice = tif.pages[idx].asarray()
             sampled_values.extend(img_slice.ravel()[::interval])
-    return np.array(sampled_values)
+        sampled_values = np.array(sampled_values)
+        result = {}
+        if 'min' in stats:
+            result['min'] = np.min(sampled_values)
+        if 'max' in stats:
+            result['max'] = np.max(sampled_values)
+        if 'mean' in stats:
+            result['mean'] = np.mean(sampled_values)
+        if 'std' in stats:
+            result['std'] = np.std(sampled_values)
+        return result
 
-
-def save_large_image(slice_generator, output_file, precision=np.float32):
+def process_image(input_path, output_path, operations, per_slice=False, precision=np.float32, sample_rate=0.01):
     """
-    Save slices from a generator to a TIFF file.
+    Processes an image by applying operations.
 
     Args:
-        slice_generator (generator): Generator yielding image slices.
-        output_file (str): Path to the output TIFF file.
-        precision (np.dtype, optional): Data type for the output image.
+        input_path (str): Path to the input image file.
+        output_path (str): Path to save the processed image.
+        operations (list of Operation instances): List of operations to apply.
+        per_slice (bool): Whether to apply operations per slice.
+        precision (dtype): Desired data type for the output image.
+        sample_rate (float): Sample rate for estimating global statistics.
     """
-    with tifffile.TiffWriter(output_file, bigtiff=True) as tif_writer:
-        for img_slice in slice_generator:
-            tif_writer.write(img_slice.astype(precision))
+    # Determine if image is large (needs to be processed per slice)
+    img_info = os.stat(input_path)
+    large_image = img_info.st_size > 1e9 or per_slice  # Threshold size can be adjusted
+
+    # Determine which statistics are needed
+    stats_needed = set()
+    for op in operations:
+        stats_needed.update(op.needs_stats)
+    global_stats = {}
+    if stats_needed:
+        # Compute global statistics
+        global_stats = compute_global_statistics(input_path, stats=list(stats_needed), sample_rate=sample_rate)
+        # Set global statistics in operations
+        for op in operations:
+            op.set_global_stats(global_stats)
+
+    if large_image:
+        # Process per slice
+        with tifffile.TiffFile(input_path) as tif:
+            with tifffile.TiffWriter(output_path, bigtiff=True) as tif_writer:
+                for page in tif.pages:
+                    img_slice = page.asarray()
+                    # Apply operations to the slice
+                    for op in operations:
+                        img_slice = op(img_slice)
+                    # Save the processed slice
+                    tif_writer.write(img_slice.astype(precision))
+    else:
+        # Load the entire image into memory
+        img = io.imread(input_path)
+        if per_slice and img.ndim == 3:
+            # Apply operations per slice
+            for i in range(img.shape[0]):
+                img_slice = img[i]
+                for op in operations:
+                    img_slice = op(img_slice)
+                img[i] = img_slice
+        else:
+            # Apply operations to the whole image
+            for op in operations:
+                img = op(img)
+        # Save the processed image
+        tifffile.imwrite(output_path, img.astype(precision))
+
+def process_image_folder(input_folder, output_folder, operations, per_slice=False, precision=np.float32, sample_rate=0.01):
+    """
+    Processes all images in a folder by applying operations.
+
+    Args:
+        input_folder (str): Path to the folder containing input images.
+        output_folder (str): Path to the folder to save the processed images.
+        operations (list of Operation instances): List of operations to apply.
+        per_slice (bool): Whether to apply operations per slice.
+        precision (dtype): Desired data type for the output images.
+        sample_rate (float): Sample rate for estimating global statistics.
+    """
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+    image_files = [f for f in os.listdir(input_folder) if f.endswith(('.tif', '.tiff'))]
+    for image_file in image_files:
+        input_path = os.path.join(input_folder, image_file)
+        output_path = os.path.join(output_folder, image_file)
+        process_image(input_path, output_path, operations, per_slice=per_slice, precision=precision, sample_rate=sample_rate)
+        print(f"Processed and saved: {output_path}")
+
+def maximum_intensity_projection(image_path, axis=0):
+    """
+    Perform a maximum intensity projection along a specified axis.
+
+    Args:
+        image_path (str): Path to the 3D image stack file.
+        axis (int): Axis along which to compute the projection.
+
+    Returns:
+        np.ndarray: The maximum intensity projection image.
+    """
+    img = io.imread(image_path)
+    mip = np.max(img, axis=axis)
+    return mip
