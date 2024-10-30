@@ -128,7 +128,7 @@ def process_image(input_path, output_path, operations, per_slice=False, precisio
     stats_needed = set()
     for op in operations:
         stats_needed.update(op.needs_stats)
-    global_stats = {}
+
     if stats_needed:
         # Compute global statistics
         global_stats = compute_global_statistics(input_path, stats=list(stats_needed), sample_rate=sample_rate)
@@ -185,19 +185,19 @@ def process_image_folder(input_folder, output_folder, operations, per_slice=Fals
         process_image(input_path, output_path, operations, per_slice=per_slice, precision=precision, sample_rate=sample_rate)
         print(f"Processed and saved: {output_path}")
 
-def intensity_projection(image, type='maximum', axis=0):
+def intensity_projection(image, projection='maximum', axis=0):
     """
     Perform a maximum intensity projection along a specified axis.
 
     Args:
         image (np.ndarray): Path to the 3D image stack file.
-        type (str): Type of intensity projection to apply.
+        projection (str): Type of intensity projection to apply.
         axis (int): Axis along which to compute the projection.
 
     Returns:
         np.ndarray: The maximum intensity projection image.
     """
-    if type == 'maximum':
+    if projection == 'maximum':
         return np.max(image, axis=axis)
-    elif type == 'std':
+    elif projection == 'std':
         return np.std(image, axis=axis)

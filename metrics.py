@@ -83,7 +83,7 @@ def f1_score(y_true, y_pred):
     recall_score = recall(y_true, y_pred)
     return 2 * (precision_score * recall_score) / (precision_score + recall_score + 1e-6)
 
-def accuracy(y_true, y_pred):
+def sensitivity(y_true, y_pred):
     """
     Calculate the accuracy score between two 3D binary arrays.
 
@@ -116,3 +116,10 @@ def specificity(y_true, y_pred):
     true_negatives = np.sum((y_true_flat == 0) & (y_pred_flat == 0))
     possible_negatives = np.sum(y_true_flat == 0)
     return true_negatives / (possible_negatives + 1e-6)
+
+def print_metrics(filename, y_true, y_pred, operations=None):
+    if operations is None:
+        operations = [f1_score, dice_coefficient, jaccard_index, specificity, sensitivity]
+    print('%s ' %filename)
+    for op in operations:
+        print('%f ' %op(y_true, y_pred))
