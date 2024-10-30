@@ -75,7 +75,7 @@ class ZScoreNorm(Operation):
             std = np.std(img)
             return (img - mean) / std if std > 0 else img - mean
 
-def compute_global_statistics(input_path, stats=['min', 'max', 'mean', 'std'], sample_rate=0.01):
+def compute_global_statistics(input_path, stats=None, sample_rate=0.01):
     """
     Computes global statistics over an image by sampling slices.
 
@@ -87,6 +87,8 @@ def compute_global_statistics(input_path, stats=['min', 'max', 'mean', 'std'], s
     Returns:
         dict: Dictionary of computed statistics.
     """
+    if stats is None:
+        stats = ['min', 'max', 'mean', 'std']
     with tifffile.TiffFile(input_path) as tif:
         total_slices = len(tif.pages)
         interval = max(1, int(1 / sample_rate))
@@ -162,7 +164,7 @@ def process_image(input_path, output_path, operations, per_slice=False, precisio
         # Save the processed image
         tifffile.imwrite(output_path, img.astype(precision))
 
-def process_image_folder(input_folder, output_folder, operations, per_slice=False, precision=np.float32, sample_rate=0.01):
+def process_image_folder(input_folder, output_folder, operations, per_slice=False, precision=np.float32, sample_rate=1.0):
     """
     Processes all images in a folder by applying operations.
 
@@ -183,17 +185,19 @@ def process_image_folder(input_folder, output_folder, operations, per_slice=Fals
         process_image(input_path, output_path, operations, per_slice=per_slice, precision=precision, sample_rate=sample_rate)
         print(f"Processed and saved: {output_path}")
 
-def maximum_intensity_projection(image_path, axis=0):
+def intensity_projection(image, type='maximum', axis=0):
     """
     Perform a maximum intensity projection along a specified axis.
 
     Args:
-        image_path (str): Path to the 3D image stack file.
+        image (np.ndarray): Path to the 3D image stack file.
+        type (str): Type of intensity projection to apply.
         axis (int): Axis along which to compute the projection.
 
     Returns:
         np.ndarray: The maximum intensity projection image.
     """
-    img = io.imread(image_path)
-    mip = np.max(img, axis=axis)
-    return mip
+    if type == 'maximum':
+        return np.max(image, axis=axis)
+    elif type == 'std':
+        return np.std(image, axis=axis)

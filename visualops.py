@@ -60,8 +60,8 @@ def create_image_panel(image_dir, mask_dir, output_filename, max_panels=10, is_3
             mask_image_path = os.path.join(mask_dir, mask_image_name)
 
             if is_3d:
-                original_img = imo.maximum_intensity_projection(original_image_path, axis=projection_axis)
-                mask_img = imo.maximum_intensity_projection(mask_image_path, axis=projection_axis) if overlay_mask else None
+                original_img = imo.intensity_projection(original_image_path, axis=projection_axis)
+                mask_img = imo.intensity_projection(mask_image_path, axis=projection_axis) if overlay_mask else None
             else:
                 original_img = io.imread(original_image_path)
                 mask_img = io.imread(mask_image_path) if overlay_mask else None
